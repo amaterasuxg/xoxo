@@ -60,7 +60,7 @@ def prepare_slowfast_input(frame_buffer):
 # ==========================================
 # 3. รันวิดีโอและทำนายผล
 # ==========================================
-video_path = "TestClip/work_02.mp4" # เปลี่ยนเป็น 0 หากต้องการใช้กล้องเว็บแคม
+video_path = "TestClip/sit1.mp4" # เปลี่ยนเป็น 0 หากต้องการใช้กล้องเว็บแคม
 cap = cv2.VideoCapture(video_path)
 
 frame_buffer = []
