@@ -14,7 +14,7 @@ from ultralytics import YOLO
 # ==========================================
 # 1. ตั้งค่าและโหลดโมเดล
 # ==========================================
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "gpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 NUM_CLASSES = 3
 CLASSES = ["Working", "Not Working", "Falling"]
 COLORS = [(0, 255, 0), (0, 165, 255), (0, 0, 255)]

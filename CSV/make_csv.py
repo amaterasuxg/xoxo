@@ -5,9 +5,9 @@ import random
 # 1. ตั้งค่าโฟลเดอร์เก็บวิดีโอและ Label (แก้ชื่อโฟลเดอร์ให้ตรงกับของเครื่องคุณ)
 # สมมติว่าคุณแยกวิดีโอไว้ใน 3 โฟลเดอร์ตามท่าทาง
 DATA_FOLDERS = {
-    "dataset/videos/Working": 0,
-    "dataset/videos/Not_Working": 1,
-    "dataset/videos/Falling": 2
+    "Dataset/video/Working": 0,
+    "Dataset/video/Not_Working": 1,
+    "Dataset/video/Falling": 2
 }
 
 all_videos = []

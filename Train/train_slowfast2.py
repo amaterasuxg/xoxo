@@ -12,33 +12,17 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
-import wandb
-import matplotlib.pyplot as plt  # ไลบรารีสำหรับวาดกราฟ
+import matplotlib.pyplot as plt  # ไลบรารีสำหรับวาดกราฟตอนจบ
 
 # ==========================================
-# 1. 🛠️ HYPER-PARAMETERS (ปรับเป็น 3 คลาสแล้ว)
+# 1. 🛠️ HYPER-PARAMETERS (ปรับเป็น 3 คลาส)
 # ==========================================
 NUM_CLASSES = 3  # Working (0), Not Working (1), Falling (2)
-BATCH_SIZE = 24
+BATCH_SIZE = 16  # ปรับลดลงได้ (เช่น 8 หรือ 16) หากรันแล้วขึ้น Out of Memory
 EPOCHS = 50
 LEARNING_RATE = 1e-4
 IMAGE_SIZE = 224
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "gpu")
-
-# --- เปิดการเชื่อมต่อ WandB ---
-wandb.init(
-    project="action-recognition-project",
-    name="SlowFast_3Classes_Run100", # ตั้งชื่อ Run
-    config={
-        "learning_rate": LEARNING_RATE,
-        "epochs": EPOCHS,
-        "batch_size": BATCH_SIZE,
-        "optimizer": "Adam",
-        "loss_function": "CrossEntropyLoss",
-        "model_architecture": "SlowFast",
-        "classes": NUM_CLASSES
-    }
-)
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu") # ป้องกัน error หากพิมพ์ gpu
 
 # ==========================================
 # 2. คลาสโหลดวิดีโอ (Custom OpenCV)
@@ -83,6 +67,7 @@ class OpenCVVideoDataset(Dataset):
                 current_frame += 1
             cap.release()
 
+        # เติมเฟรมให้เต็ม 32 เฟรม กรณีคลิปสั้นเกินไป
         while len(frames) < self.num_frames:
             frames.append(frames[-1] if len(frames) > 0 else np.zeros((self.image_size, self.image_size, 3), dtype=np.uint8))
 
@@ -103,9 +88,10 @@ class OpenCVVideoDataset(Dataset):
 # 3. โหลดข้อมูล Train และ Val
 # ==========================================
 print("กำลังโหลดชุดข้อมูลจาก dataset ด้วย OpenCV...")
-train_dataset = OpenCVVideoDataset(csv_file="dataset/train.csv", image_size=IMAGE_SIZE)
-val_dataset = OpenCVVideoDataset(csv_file="dataset/val.csv", image_size=IMAGE_SIZE)
+train_dataset = OpenCVVideoDataset(csv_file="Dataset/train.csv", image_size=IMAGE_SIZE)
+val_dataset = OpenCVVideoDataset(csv_file="Dataset/val.csv", image_size=IMAGE_SIZE)
 
+# เปลี่ยน num_workers เป็น 2 หรือ 4 ได้หากต้องการให้โหลดภาพเร็วขึ้น (ถ้าใช้ Windows แนะนำ 0)
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, num_workers=0, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, num_workers=0, shuffle=False)
 
@@ -115,11 +101,11 @@ val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, num_workers=0, shuff
 print("กำลังโหลดโมเดล SlowFast ต้นฉบับ...")
 model = torch.hub.load('facebookresearch/pytorchvideo', 'slowfast_r50', pretrained=True)
 
-# แช่แข็งพารามิเตอร์ทั้งหมด
+# แช่แข็งพารามิเตอร์ทั้งหมด (Transfer Learning)
 for param in model.parameters():
     param.requires_grad = False
 
-# ปลดล็อก Block 5 
+# ปลดล็อก Block 5 ให้เรียนรู้ลักษณะภาพใหม่
 for param in model.blocks[5].parameters():
     param.requires_grad = True
 
@@ -138,7 +124,7 @@ optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr
 # ==========================================
 print(f"เริ่มการเทรนบน {DEVICE} (ทั้งหมด {EPOCHS} รอบ)...")
 
-# ตัวแปรสำหรับเก็บประวัติไปวาดกราฟ
+# ตัวแปรสำหรับเก็บประวัติไปวาดกราฟตอนจบ
 history_train_loss = []
 history_val_loss = []
 history_train_acc = []
@@ -200,26 +186,17 @@ for epoch in range(EPOCHS):
     print(f"Train Loss: {avg_train_loss:.4f} | Train Top-1 Acc: {train_acc:.2f}%")
     print(f"Val Loss:   {avg_val_loss:.4f} | Val Top-1 Acc:   {val_acc:.2f}%\n")
     
-    # เก็บค่าลง List เพื่อเตรียมวาดกราฟ (แปลง Acc เป็น 0-1)
+    # เก็บค่าลง List เพื่อเตรียมวาดกราฟ (แปลง Acc เป็น 0-1 เพื่อให้อยู่ในกราฟแกนเดียวกับ Loss ง่ายขึ้น หรือคงค่า 0-100 ไว้ก็ได้)
     history_train_loss.append(avg_train_loss)
     history_val_loss.append(avg_val_loss)
-    history_train_acc.append(train_acc / 100)
-    history_val_acc.append(val_acc / 100)
-    
-    # ส่งขึ้น WandB
-    wandb.log({
-        "Epoch": epoch + 1,
-        "Train Loss": avg_train_loss,
-        "Train Top-1 Accuracy": train_acc,
-        "Validation Loss": avg_val_loss,
-        "Validation Top-1 Accuracy": val_acc
-    })
+    history_train_acc.append(train_acc)
+    history_val_acc.append(val_acc)
         
 # ==========================================
 # 6. บันทึกผลลัพธ์
 # ==========================================
-torch.save(model.state_dict(), "custom_slowfast_3class_run50.pth")
-wandb.finish()
+torch.save(model.state_dict(), "custom_slowfast_3class_final.pth")
+print(f"💾 บันทึกไฟล์น้ำหนักโมเดลเรียบร้อย: custom_slowfast_3class_final.pth")
 
 # ==========================================
 # 7. วาดกราฟ Train/Val แบบซ้อนกัน
@@ -228,22 +205,23 @@ print("กำลังวาดกราฟและบันทึกรูป�
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
 
 # (a) กราฟ Loss
-ax1.plot(history_train_loss, label='Train', color='blue')
-ax1.plot(history_val_loss, label='Validation', color='red')
-ax1.set_title('Loss')
-ax1.set_xlabel('epochs')
-ax1.set_ylabel('loss')
+ax1.plot(history_train_loss, label='Train Loss', color='blue')
+ax1.plot(history_val_loss, label='Validation Loss', color='red')
+ax1.set_title('Training and Validation Loss')
+ax1.set_xlabel('Epochs')
+ax1.set_ylabel('Loss')
 ax1.legend()
 
 # (b) กราฟ Top-1 Accuracy
-ax2.plot(history_train_acc, label='Train', color='blue')
-ax2.plot(history_val_acc, label='Validation', color='red')
-ax2.set_title('Top-1 Accuracy')
-ax2.set_xlabel('epochs')
-ax2.set_ylabel('accuracy')
+ax2.plot(history_train_acc, label='Train Accuracy', color='blue')
+ax2.plot(history_val_acc, label='Validation Accuracy', color='red')
+ax2.set_title('Training and Validation Accuracy (%)')
+ax2.set_xlabel('Epochs')
+ax2.set_ylabel('Accuracy (%)')
 ax2.legend()
 
 plt.tight_layout()
 plt.savefig('train_val_graph_3class.png', dpi=300)
-print("🎉 เทรนเสร็จสมบูรณ์! ได้โมเดล custom_slowfast_3class.pth")
-print("📸 บันทึกภาพกราฟ Train vs Val สำเร็จ! (ไฟล์: train_val_graph_3class.png)")
+
+print("🎉 เทรนเสร็จสมบูรณ์!")
+print("📸 บันทึกภาพกราฟ Train vs Val สำเร็จ! (ตรวจสอบไฟล์: train_val_graph_3class.png)")
