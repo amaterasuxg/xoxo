@@ -1,20 +1,14 @@
-# ==========================================
-# 0. โค้ดแก้ปัญหาไลบรารี pytorchvideo (ต้องอยู่บนสุด)
-# ==========================================
 import sys
 import torchvision.transforms.functional as F_vision
 sys.modules['torchvision.transforms.functional_tensor'] = F_vision
-
+# library ต่างๆ
 import cv2
 import torch
 import torch.nn as nn
 import numpy as np
 import threading
 from ultralytics import YOLO
-
-# ==========================================
-# 1. คลาสสำหรับอ่านกล้อง IP แบบ Real-time (แยก Thread ป้องกันภาพดีเลย์)
-# ==========================================
+# เปิดกล้อง , threds , loop
 class RealtimeCamera:
     def __init__(self, src=0):
         self.stream = cv2.VideoCapture(src)
@@ -38,10 +32,7 @@ class RealtimeCamera:
 
     def stop(self):
         self.stopped = True
-
-# ==========================================
-# 2. ตั้งค่าและโหลดโมเดล
-# ==========================================
+# เช็ค GPU
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 NUM_CLASSES = 3
@@ -55,13 +46,10 @@ print("กำลังโหลดโมเดล SlowFast (วิเครา�
 slowfast_model = torch.hub.load('facebookresearch/pytorchvideo', 'slowfast_r50', pretrained=False)
 in_features = slowfast_model.blocks[6].proj.in_features
 slowfast_model.blocks[6].proj = nn.Linear(in_features, NUM_CLASSES)
-slowfast_model.load_state_dict(torch.load("trained/custom_slowfast_3class_best.pth", map_location=DEVICE))
+slowfast_model.load_state_dict(torch.load("Trained/SlowFast.pth", map_location=DEVICE))
 slowfast_model = slowfast_model.to(DEVICE)
 slowfast_model.eval()
-
-# ==========================================
-# 3. ฟังก์ชันเตรียมข้อมูลให้ SlowFast
-# ==========================================
+#ดึงเข้า SlowFast
 def prepare_slowfast_input(frame_buffer):
     video_np = np.array(frame_buffer)
     clip_tensor = torch.from_numpy(video_np).permute(3, 0, 1, 2).float() / 255.0
@@ -74,44 +62,37 @@ def prepare_slowfast_input(frame_buffer):
     slow = torch.index_select(fast, 1, slow_idx)
     return [slow.unsqueeze(0).to(DEVICE), fast.unsqueeze(0).to(DEVICE)]
 
-# ==========================================
-# 4. รันวิดีโอและทำนายผล
-# ==========================================
-# ⚠️ เปลี่ยนตรงนี้เป็นลิงก์ RTSP หรือ HTTP ของกล้อง Wi-Fi ของคุณ
+
 video_path = "rtsp://admin:group166@192.168.1.64:554/Streaming/Channels/101" 
 
 print("กำลังเชื่อมต่อกล้อง...")
 cap = RealtimeCamera(video_path).start()
-
+#vote , smooth box
 frame_buffer = []
 current_action = "Waiting..."
 current_color = (255, 255, 255)
 prediction_history = []
 VOTE_SIZE = 7
-
-# --- ตัวแปรสำหรับปรับแต่งความลื่นไหล ---
 frame_count = 0
-SKIP_FRAMES = 2  # ประมวลผล 1 เฟรม ข้าม 2 เฟรม (ลดภาระเครื่องได้ 3 เท่า)
-
-# --- ตัวแปรสำหรับแก้กรอบวาร์ป (Smooth Bounding Box) ---
+SKIP_FRAMES = 2  
 smooth_box = None
-ALPHA = 0.4  # ค่าความสมูท (0.1 ถึง 1.0) ถ้าน้อย = กรอบไหลลื่นวิ่งตามช้า / ถ้ามาก = ตามไวแต่แข็ง
+ALPHA = 0.4  
 sx1 = sy1 = sx2 = sy2 = 0
 has_person = False
-
+# สั่ง yolo + slowfast ทำงานแบบเรียลไทม์
 print("🚀 เริ่มการตรวจจับแบบ Hybrid (Real-time Threading & Smooth Box)...")
 while True:
     ret, frame = cap.read()
     if not ret or frame is None:
-        continue # ถ้าดึงภาพไม่ได้ ให้รอรอบถัดไป
+        continue 
         
     frame_count += 1
     
-    # --- รัน AI เฉพาะเฟรมที่กำหนด (ข้ามเฟรมเพื่อลดภาระ) ---
+    
     if frame_count % SKIP_FRAMES == 0:
         results = yolo_model.predict(frame, classes=[0], verbose=False)
         boxes = results[0].boxes.xyxy.cpu().numpy()
-        
+        #เจอแล้วดึงเข้า SlowFast
         if len(boxes) > 0:
             has_person = True
             x1, y1, x2, y2 = map(int, boxes[0])
@@ -119,13 +100,13 @@ while True:
             # --- ระบบคำนวณสมูทกรอบ (EMA) ---
             current_box = np.array([x1, y1, x2, y2])
             if smooth_box is None:
-                smooth_box = current_box # เจอคนครั้งแรกให้กรอบอยู่ที่คนเลย
+                smooth_box = current_box 
             else:
                 smooth_box = (ALPHA * current_box) + ((1 - ALPHA) * smooth_box)
                 
             sx1, sy1, sx2, sy2 = map(int, smooth_box)
             
-            # ใช้พิกัดดั้งเดิมของเฟรมนั้นๆ เพื่อความแม่นยำในการตัดภาพ
+            #ขยายกรอบ Bounding Box ออกไป 15% เพื่อให้เห็นท่าทางชัดขึ้นและกันกรอบสั่น
             h, w, _ = frame.shape
             box_w, box_h = x2 - x1, y2 - y1
             pad_x, pad_y = int(box_w * 0.15), int(box_h * 0.15)
@@ -133,7 +114,7 @@ while True:
             px2, py2 = min(w, x2 + pad_x), min(h, y2 + pad_y)
             
             cropped_person = frame[py1:py2, px1:px2]
-            
+            #ตัดคนแล้ว resize ให้เป็น 224x224 เพื่อส่งเข้า SlowFast
             if cropped_person.size > 0:
                 person_rgb = cv2.cvtColor(cropped_person, cv2.COLOR_BGR2RGB)
                 person_resized = cv2.resize(person_rgb, (224, 224))
@@ -144,7 +125,7 @@ while True:
                     inputs = prepare_slowfast_input(frame_buffer)
                     
                     with torch.no_grad():
-                        preds = slowfast_model(inputs)
+                        preds = slowfast_model(inputs)#โยน slowfast เข้าโมเดล
                         probs = torch.nn.functional.softmax(preds, dim=1)
                         max_prob, predicted_class_tensor = torch.max(probs, dim=1)
                         
@@ -160,26 +141,23 @@ while True:
                     current_action = f"{CLASSES[final_voted_class]} ({confidence*100:.1f}%)"
                     current_color = COLORS[final_voted_class]
                     
-                    # Sliding Window
+                    
                     frame_buffer = frame_buffer[16:]
         else:
-            # ไม่เจอคน
+            
             has_person = False
             smooth_box = None
             frame_buffer.clear()
             prediction_history.clear()
             current_action = "Waiting..."
             current_color = (255, 255, 255)
-            
-    # --- วาดกรอบและแสดงผล (วาดบนทุกเฟรม ไม่ว่า AI จะทำงานข้ามเฟรมอยู่หรือไม่) ---
+
     if has_person:
         cv2.rectangle(frame, (sx1, sy1), (sx2, sy2), current_color, 2)
         cv2.putText(frame, current_action, (sx1, sy1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, current_color, 2)
 
-    cv2.imshow("Hybrid Fall Detection (Real-time & Smooth Box)", frame)
-    
+    cv2.imshow("Hybrid Fall Detection (Real-time & Smooth Box)", frame)    
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
-
 cap.stop()
 cv2.destroyAllWindows()
